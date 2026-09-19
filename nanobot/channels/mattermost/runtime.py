@@ -53,7 +53,6 @@ class MattermostConfig(Base):
     include_thread_context: bool = True
     thread_context_limit: int = 20
     streaming: bool = True
-    streaming_max_chars: int = 16000
     react_emoji: str = "eyes"
     done_emoji: str = "white_check_mark"
     send_progress: bool = True
@@ -106,7 +105,6 @@ class MattermostChannel(BaseChannel):
         self._ws_task: asyncio.Task[None] | None = None
         self._self_id: str | None = None
         self._self_username: str | None = None
-        self._self_email: str | None = None
         self._usernames: dict[str, str] = {}
         self._user_emails: dict[str, str] = {}
         self._channel_types: dict[str, str] = {}
@@ -138,7 +136,6 @@ class MattermostChannel(BaseChannel):
             me = cast(dict[str, Any], resp.json())
             self._self_id = me.get("id")
             self._self_username = me.get("username")
-            self._self_email = me.get("email", "")
             self.logger.info("bot @{} connected", self._self_username)
         except Exception as e:
             self.logger.error("Failed to identify bot user: {}", e)
@@ -219,6 +216,10 @@ class MattermostChannel(BaseChannel):
             )
         except json.JSONDecodeError:
             self.logger.warning("failed to parse post json")
+            return
+
+        post_type = post.get("type")
+        if isinstance(post_type, str) and post_type.startswith("system_"):
             return
 
         sender_id = post.get("user_id", "")
@@ -658,11 +659,6 @@ class MattermostChannel(BaseChannel):
         resp.raise_for_status()
         return cast(dict[str, Any], resp.json())
 
-    async def _api_put(self, path: str, json_data: dict[str, Any]) -> dict[str, Any]:
-        resp = await self._require_http_client().put(path, json=json_data)
-        resp.raise_for_status()
-        return cast(dict[str, Any], resp.json())
-
     async def _create_post(
         self,
         channel_id: str,
@@ -680,9 +676,6 @@ class MattermostChannel(BaseChannel):
         if file_ids:
             body["file_ids"] = file_ids
         return await self._api_post("/api/v4/posts", body)
-
-    async def _edit_post(self, post_id: str, message: str) -> dict[str, Any]:
-        return await self._api_put(f"/api/v4/posts/{post_id}", {"id": post_id, "message": message})
 
     async def _upload_file(self, channel_id: str, file_path: str) -> str | None:
         path = Path(file_path)

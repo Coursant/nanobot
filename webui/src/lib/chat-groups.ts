@@ -216,7 +216,7 @@ export function visibleSessionsForGroup(
 }
 
 export function displayTitle(
-  session: ChatSummary,
+  session: Pick<ChatSummary, "key" | "title" | "preview">,
   titleOverrides: Record<string, string>,
   fallbackTitle: string,
 ): string {
@@ -339,7 +339,7 @@ function sortProjectSessions(
   });
 }
 
-function sortSessions(
+export function sortSessions(
   sessions: ChatSummary[],
   sort: SidebarSortMode,
   titleOverrides: Record<string, string>,
