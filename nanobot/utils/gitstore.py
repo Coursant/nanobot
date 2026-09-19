@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, cast
 
 from loguru import logger
 
+from nanobot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
+
 if TYPE_CHECKING:
     from dulwich.objects import Blob, Commit, ObjectID, Tree
     from dulwich.refs import Ref
@@ -91,7 +93,8 @@ class GitStore:
                     if line not in existing_lines
                 ]
                 if new_lines:
-                    merged = existing.rstrip("\n") + "\n" + "\n".join(new_lines) + "\n"
+                    # User rules must remain last: ignore negations are order-sensitive.
+                    merged = "\n".join(new_lines) + "\n" + existing
                     gitignore.write_text(merged, encoding="utf-8")
             else:
                 gitignore.write_text(dream_entries, encoding="utf-8")
@@ -212,6 +215,12 @@ class GitStore:
 
     def _build_gitignore(self) -> str:
         """Generate .gitignore content from tracked files."""
+        lines = self._legacy_gitignore_lines()
+        lines.extend(self._missing_dir_blocks(set()))
+        return "\n".join(lines) + "\n"
+
+    def _legacy_gitignore_lines(self) -> list[str]:
+        """The generated prefix used before per-directory ignore rules."""
         dirs: set[str] = set()
         for f in self._tracked_files:
             parent = str(Path(f).parent)
@@ -221,11 +230,9 @@ class GitStore:
         for d in sorted(dirs):
             lines.append(f"!{d}/")
         for f in self._tracked_files:
-            if str(Path(f).parent) == ".":
-                lines.append(f"!{f}")
+            lines.append(f"!{f}")
         lines.append("!.gitignore")
-        lines.extend(self._missing_dir_blocks(set()))
-        return "\n".join(lines) + "\n"
+        return lines
 
     def _missing_dir_blocks(self, existing_lines: set[str]) -> list[str]:
         """Ignore rules for tracked directories not covered by *existing_lines*.
@@ -250,7 +257,7 @@ class GitStore:
         return additions
 
     def ensure_gitignore(self) -> bool:
-        """Backfill ignore rules into an already-initialized workspace.
+        """Backfill recognized generated prefixes, before any user overrides.
 
         Workspaces created before the per-directory rules existed may show
         runtime files such as ``memory/history.jsonl`` as untracked (#5246).
@@ -261,14 +268,32 @@ class GitStore:
             return False
 
         gitignore = self._workspace / ".gitignore"
+        if gitignore.is_symlink() or not gitignore.exists():
+            return False
         try:
-            existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+            existing = gitignore.read_text(encoding="utf-8")
+            prefix, marker, overrides = existing.partition("!.gitignore\n")
+            if not marker:
+                return False
+            prefix += marker
+            prefix_lines = prefix.splitlines()
+            legacy_lines = self._legacy_gitignore_lines()
+            # Nested tracked files may have been added since initialization (for
+            # example the Dream cursor), but an unknown user policy is not ours to edit.
+            required = [
+                line for line in legacy_lines
+                if not line.startswith("!") or line.endswith("/") or "/" not in line
+            ]
+            if (
+                not set(required).issubset(prefix_lines)
+                or prefix_lines != [line for line in legacy_lines if line in prefix_lines]
+            ):
+                return False
             additions = self._missing_dir_blocks(set(existing.splitlines()))
             if not additions:
                 return False
-            merged = existing.rstrip("\n")
-            body = (merged + "\n" if merged else "") + "\n".join(additions) + "\n"
-            gitignore.write_text(body, encoding="utf-8")
+            body = prefix + "\n".join(additions) + "\n" + overrides
+            _write_text_atomic(gitignore, body)
             logger.debug("Git store ignore rules backfilled at {}", self._workspace)
             return True
         except OSError as exc:

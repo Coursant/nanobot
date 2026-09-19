@@ -564,3 +564,14 @@ def test_legacy_workspace_gitignore_backfilled_on_construction(tmp_path):
     lines = (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "memory/*" in lines
     assert "!memory/.dream_cursor" in lines
+
+
+def test_gitignore_backfill_failure_does_not_prevent_memory_open(tmp_path, monkeypatch):
+    from nanobot.utils.gitstore import GitStore, GitStoreError
+
+    def fail(_self):
+        raise GitStoreError("read-only workspace")
+
+    monkeypatch.setattr(GitStore, "ensure_gitignore", fail)
+    store = MemoryStore(tmp_path)
+    assert store.memory_dir.is_dir()
