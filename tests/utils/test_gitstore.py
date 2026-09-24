@@ -372,6 +372,25 @@ class TestRuntimeFileIgnoring:
         assert not list(tmp_path.glob("..gitignore.*.tmp"))
         assert store.ensure_gitignore()
 
+    def test_symlinked_ignore_policy_is_not_migrated(self, tmp_path):
+        from dulwich import porcelain
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        porcelain.init(str(workspace))
+        target = tmp_path / "shared-ignore"
+        legacy = b"/*\n!memory/\n!SOUL.md\n!USER.md\n!memory/MEMORY.md\n!.gitignore\n"
+        target.write_bytes(legacy)
+        ignore = workspace / ".gitignore"
+        try:
+            ignore.symlink_to(target)
+        except OSError as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        assert not GitStore(workspace, tracked_files=self.TRACKED).ensure_gitignore()
+        assert ignore.is_symlink()
+        assert target.read_bytes() == legacy
+
     def test_migration_does_not_untrack_existing_runtime_files(self, tmp_path):
         store = GitStore(tmp_path, tracked_files=self.TRACKED)
         store.init()

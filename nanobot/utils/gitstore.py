@@ -296,6 +296,10 @@ class GitStore:
             _write_text_atomic(gitignore, body)
             logger.debug("Git store ignore rules backfilled at {}", self._workspace)
             return True
+        except UnicodeDecodeError:
+            # Unknown user policy: preserve its bytes, rather than rewriting
+            # with replacement characters or preventing memory startup.
+            return False
         except OSError as exc:
             raise GitStoreError(
                 f"Git ignore backfill failed for {self._workspace}"
